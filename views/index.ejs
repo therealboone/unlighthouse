@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Run Google Lighthouse audits on a single page or across your site (mobile or desktop)." />
+    <title>Lighthouse Scanner</title>
+    <style>
+      :root { color-scheme: light dark; }
+      *, *::before, *::after { box-sizing: border-box; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; line-height: 1.45; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #111; background: #fafafa; }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e8e8e8; background: #121212; }
+        .card { border-color: #333; background: #1a1a1a; }
+        .score { background: #252525; }
+        table.site-results th, table.site-results td { border-color: #333; }
+        table.site-results th { background: #2a2a2a; }
+        input[type="text"] { background: #1a1a1a; color: inherit; border: 1px solid #444; }
+        .hint { color: #aaa; }
+      }
+      a { color: #1565c0; }
+      @media (prefers-color-scheme: dark) { a { color: #64b5f6; } }
+      a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
+      form .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .75rem; }
+      form .device { display: flex; gap: 1rem; align-items: center; font-size: .95rem; flex-wrap: wrap; }
+      form .device label { display: flex; align-items: center; gap: .35rem; cursor: pointer; }
+      input[type="text"] { flex: 1; min-width: 200px; padding: .6rem; font-size: 1rem; }
+      button { padding: .6rem 1rem; cursor: pointer; }
+      .hint { font-size: .9rem; color: #444; margin: .5rem 0 1rem; }
+      .error { color: #b00020; margin: 1rem 0; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+      .scores { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .75rem; }
+      .score { background: #333; border-radius: 6px; padding: .75rem; text-align: center; }
+      .metric { margin: .35rem 0; }
+      .table-tools { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .75rem; }
+      .table-tools input[type="search"],
+      .table-tools input[type="number"] { padding: .45rem .55rem; font-size: .9rem; }
+      .table-tools .count { font-size: .9rem; opacity: .85; }
+      .table-tools .spacer { flex: 1; }
+      table.site-results { width: 100%; border-collapse: collapse; font-size: .9rem; margin-top: .75rem; }
+      table.site-results th, table.site-results td { border: 1px solid #ddd; padding: .45rem .5rem; text-align: left; }
+      table.site-results th { background: #f0f0f0; }
+      table.site-results td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      table.site-results td.url { word-break: break-all; max-width: 28rem; }
+      button:disabled { opacity: 0.65; cursor: not-allowed; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Lighthouse Scanner</h1>
+    </header>
+    <main id="main">
+    <% const ff = typeof formFactor !== 'undefined' && formFactor ? formFactor : 'mobile'; %>
+    <% const sm = typeof scanMode !== 'undefined' && scanMode ? scanMode : 'single'; %>
+    <p>Enter a site URL. <strong>Single page</strong> runs Lighthouse once. <strong>Full site</strong> uses <a href="https://unlighthouse.dev/guide/getting-started/installation" target="_blank" rel="noopener">Unlighthouse</a>-style discovery (sitemap + crawl) and lists scores per URL.</p>
+    <form id="scan-form" method="post" action="/scan" aria-describedby="hint-scan">
+      <div class="row">
+        <input type="text" name="url" id="url" required inputmode="url" autocomplete="url" placeholder="https://example.com" value="<%= submittedUrl %>" />
+        <button type="submit" id="scan-btn">Scan</button>
+      </div>
+      <div class="device" role="group" aria-label="Device emulation">
+        <span>Device:</span>
+        <label>
+          <input type="radio" name="formFactor" value="mobile" <%= ff === 'mobile' ? 'checked' : '' %> />
+          Mobile
+        </label>
+        <label>
+          <input type="radio" name="formFactor" value="desktop" <%= ff === 'desktop' ? 'checked' : '' %> />
+          Desktop
+        </label>
+      </div>
+      <div class="device" role="group" aria-label="Scan scope">
+        <span>Scope:</span>
+        <label>
+          <input type="radio" name="scanMode" value="single" <%= sm === 'single' ? 'checked' : '' %> />
+          Single page
+        </label>
+        <label>
+          <input type="radio" name="scanMode" value="site" <%= sm === 'site' ? 'checked' : '' %> />
+          Full site
+        </label>
+      </div>
+    </form>
+    <p class="hint" id="hint-scan">Full-site scans can take a long time and are capped (default 50 URLs; set <code>UNLIGHTHOUSE_MAX_ROUTES</code>). Only one scan runs at a time.<% if (typeof isProd !== 'undefined' && isProd) { %> Public hosts only unless <code>ALLOW_INTERNAL_SCANS=true</code>.<% } %></p>
+
+    <% if (error) { %>
+      <div class="error"><%= error %></div>
+    <% } %>
+
+    <% if (result) { %>
+      <div class="card">
+        <h2>Results</h2>
+        <p><strong>Mode:</strong> <%= result.device === 'desktop' ? 'Desktop' : 'Mobile' %></p>
+        <p><strong>Final URL:</strong> <%= result.finalUrl %></p>
+        <div class="scores">
+          <div class="score"><div>Performance</div><strong><%= result.categories.performance %></strong></div>
+          <div class="score"><div>Accessibility</div><strong><%= result.categories.accessibility %></strong></div>
+          <div class="score"><div>Best Practices</div><strong><%= result.categories.bestPractices %></strong></div>
+          <div class="score"><div>SEO</div><strong><%= result.categories.seo %></strong></div>
+        </div>
+        <h3>Core Metrics</h3>
+        <div class="metric"><strong>LCP:</strong> <%= result.metrics.lcp %></div>
+        <div class="metric"><strong>CLS:</strong> <%= result.metrics.cls %></div>
+        <div class="metric"><strong>TBT:</strong> <%= result.metrics.tbt %></div>
+        <div class="metric"><strong>FCP:</strong> <%= result.metrics.fcp %></div>
+      </div>
+    <% } %>
+
+    <% if (siteScan) { %>
+      <div class="card">
+        <h2>Full-site results</h2>
+        <p><strong>Site:</strong> <%= siteScan.siteUrl %></p>
+        <p><strong>Device:</strong> <%= siteScan.formFactor === 'desktop' ? 'Desktop' : 'Mobile' %></p>
+        <p><strong>URLs discovered:</strong> <%= siteScan.routeCount != null ? siteScan.routeCount : '—' %> &nbsp;|&nbsp; <strong>Cap:</strong> <%= siteScan.maxRoutes %> pages</p>
+        <% if (siteScan.capped) { %>
+          <p class="hint">The scan stopped at the page cap. Increase <code>UNLIGHTHOUSE_MAX_ROUTES</code> if you need more (higher load on the server).</p>
+        <% } %>
+        <% if (siteScan.note) { %>
+          <p class="error"><%= siteScan.note %></p>
+        <% } %>
+        <% if (siteScan.rows && siteScan.rows.length) { %>
+          <div class="table-tools">
+            <label for="results-search">Search pages</label>
+            <input id="results-search" type="search" placeholder="Filter by URL or status..." />
+            <label for="results-min-score">Min Avg</label>
+            <input id="results-min-score" type="number" min="0" max="100" step="1" placeholder="0-100" />
+            <span class="count" id="results-count"><%= siteScan.rows.length %> / <%= siteScan.rows.length %> shown</span>
+            <span class="spacer"></span>
+            <button type="button" id="export-csv-btn">Export CSV</button>
+          </div>
+          <script id="site-scan-json" type="application/json"><%- JSON.stringify({ siteUrl: siteScan.siteUrl, formFactor: siteScan.formFactor, rows: siteScan.rows }) %></script>
+          <table class="site-results" id="site-results-table">
+            <thead>
+              <tr>
+                <th>URL</th>
+                <th>Status</th>
+                <th class="num">Perf</th>
+                <th class="num">A11y</th>
+                <th class="num">BP</th>
+                <th class="num">SEO</th>
+                <th class="num">Avg</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% siteScan.rows.forEach(function (row) { %>
+                <tr data-url="<%= row.url %>" data-status="<%= row.status %>" data-overall="<%= row.overall != null ? row.overall : '' %>">
+                  <td class="url"><%= row.url %></td>
+                  <td><%= row.status %></td>
+                  <td class="num"><%= row.performance != null ? row.performance : '—' %></td>
+                  <td class="num"><%= row.accessibility != null ? row.accessibility : '—' %></td>
+                  <td class="num"><%= row.bestPractices != null ? row.bestPractices : '—' %></td>
+                  <td class="num"><%= row.seo != null ? row.seo : '—' %></td>
+                  <td class="num"><%= row.overall != null ? row.overall : '—' %></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+    <% } %>
+    </main>
+    <script>
+      (function () {
+        var form = document.getElementById("scan-form");
+        var btn = document.getElementById("scan-btn");
+        if (!form || !btn) return;
+        form.addEventListener("submit", function () {
+          btn.disabled = true;
+          btn.setAttribute("aria-busy", "true");
+          var scope = document.querySelector('input[name="scanMode"]:checked');
+          var full = scope && scope.value === "site";
+          btn.textContent = full ? "Scanning site…" : "Scanning…";
+        });
+
+        var table = document.getElementById("site-results-table");
+        var search = document.getElementById("results-search");
+        var minScore = document.getElementById("results-min-score");
+        var count = document.getElementById("results-count");
+        var exportBtn = document.getElementById("export-csv-btn");
+        var jsonEl = document.getElementById("site-scan-json");
+        if (!table || !search || !minScore || !count) return;
+
+        var rows = Array.prototype.slice.call(table.querySelectorAll("tbody tr"));
+        var total = rows.length;
+        var applyFilter = function () {
+          var q = (search.value || "").trim().toLowerCase();
+          var min = Number(minScore.value);
+          var hasMin = !Number.isNaN(minScore.valueAsNumber) && minScore.value !== "";
+          var shown = 0;
+          rows.forEach(function (row) {
+            var url = (row.getAttribute("data-url") || "").toLowerCase();
+            var status = (row.getAttribute("data-status") || "").toLowerCase();
+            var overallRaw = row.getAttribute("data-overall");
+            var overall = overallRaw === "" ? null : Number(overallRaw);
+            var textMatch = !q || url.indexOf(q) !== -1 || status.indexOf(q) !== -1;
+            var scoreMatch = !hasMin || (overall !== null && !Number.isNaN(overall) && overall >= min);
+            var visible = textMatch && scoreMatch;
+            row.style.display = visible ? "" : "none";
+            if (visible) shown++;
+          });
+          count.textContent = shown + " / " + total + " shown";
+        };
+
+        search.addEventListener("input", applyFilter);
+        minScore.addEventListener("input", applyFilter);
+
+        if (exportBtn && jsonEl) {
+          exportBtn.addEventListener("click", function () {
+            var payload = null;
+            try {
+              payload = JSON.parse(jsonEl.textContent || "{}");
+            } catch (_) {
+              return;
+            }
+            if (!payload || !Array.isArray(payload.rows) || payload.rows.length === 0) return;
+
+            var esc = function (v) {
+              var s = v == null ? "" : String(v);
+              if (s.indexOf('"') !== -1 || s.indexOf(",") !== -1 || s.indexOf("\n") !== -1) {
+                return '"' + s.replace(/"/g, '""') + '"';
+              }
+              return s;
+            };
+            var lines = [
+              [
+                "site_url",
+                "device",
+                "url",
+                "status",
+                "performance",
+                "accessibility",
+                "best_practices",
+                "seo",
+                "avg"
+              ].join(",")
+            ];
+            payload.rows.forEach(function (row) {
+              lines.push(
+                [
+                  esc(payload.siteUrl || ""),
+                  esc(payload.formFactor || ""),
+                  esc(row.url),
+                  esc(row.status),
+                  esc(row.performance),
+                  esc(row.accessibility),
+                  esc(row.bestPractices),
+                  esc(row.seo),
+                  esc(row.overall)
+                ].join(",")
+              );
+            });
+
+            var csv = lines.join("\n");
+            var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            var a = document.createElement("a");
+            var slug = String((payload.siteUrl || "site").replace(/^https?:\/\//, "").replace(/[^\w.-]+/g, "_"));
+            a.href = URL.createObjectURL(blob);
+            a.download = slug + "_lighthouse_results.csv";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(a.href);
+          });
+        }
+      })();
+    </script>
+  </body>
+  </html>

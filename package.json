@@ -1,0 +1,29 @@
+{
+  "name": "lighthousescanner",
+  "version": "1.0.0",
+  "description": "Simple web app to scan URLs with Lighthouse",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "postinstall": "node scripts/apply-unlighthouse-patch.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@unlighthouse/client": "^0.17.7",
+    "@unlighthouse/core": "^0.17.7",
+    "chrome-launcher": "^1.2.1",
+    "compression": "^1.8.1",
+    "ejs": "^5.0.1",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.3.2",
+    "helmet": "^8.1.0",
+    "lighthouse": "^13.0.3"
+  }
+}

@@ -1,0 +1,2 @@
+import Sitemapper from"../assets/sitemapper.js";var Google=new Sitemapper({url:"https://www.google.com/work/sitemap.xml",debug:!1,timeout:15e3});Google.fetch().then(a=>console.log(a.sites)).catch(a=>console.log(a));
+//# sourceMappingURL=google.js.map
