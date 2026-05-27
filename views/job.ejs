@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Job <%= job.id %></title>
+    <%- include("_styles") %>
+  </head>
+  <body>
+    <header>
+      <h1>Queued Scan Job</h1>
+      <nav>
+        <a href="/">Dashboard</a>
+        <% if (site) { %><a href="/sites/<%= site.id %>">Site</a><% } %>
+        <% if (runUrl) { %><a href="<%= runUrl %>">Run</a><% } %>
+      </nav>
+    </header>
+
+    <section class="panel">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <h2><%= job.scanMode %> / <%= job.formFactor %></h2>
+          <p class="muted small"><%= job.url %></p>
+        </div>
+        <span class="status-pill <%= job.status %>"><%= job.status %></span>
+      </div>
+
+      <div class="progress" aria-label="Job progress">
+        <span style="width: <%= job.progress || 0 %>%;"></span>
+      </div>
+      <p><strong>Status:</strong> <%= job.message || "Working" %></p>
+      <% if (job.error) { %>
+        <div class="flash-error"><%= job.error %></div>
+      <% } %>
+      <div class="inline-meta">
+        <div><strong>Created</strong><br /><%= formatDate(job.createdAt) %></div>
+        <div><strong>Started</strong><br /><%= formatDate(job.startedAt) || "—" %></div>
+        <div><strong>Completed</strong><br /><%= formatDate(job.completedAt) || "—" %></div>
+        <div><strong>Source</strong><br /><%= job.source %></div>
+      </div>
+
+      <div class="section-actions">
+        <% if (runUrl) { %>
+          <a class="button-link" href="<%= runUrl %>">Open Run</a>
+        <% } %>
+        <a class="button-link secondary" href="/api/jobs/<%= job.id %>">View JSON</a>
+      </div>
+    </section>
+
+    <% if (run) { %>
+      <section class="panel">
+        <h2>Attached Run</h2>
+        <p class="muted">A run record has already been created for this job.</p>
+        <div class="inline-meta">
+          <div><strong>Run ID</strong><br /><a href="/runs/<%= run.id %>"><%= run.id %></a></div>
+          <div><strong>Status</strong><br /><%= run.status %></div>
+          <div><strong>Created</strong><br /><%= formatDate(run.createdAt) %></div>
+        </div>
+      </section>
+    <% } %>
+
+    <% if (job.status === "queued" || job.status === "running") { %>
+      <script>
+        setTimeout(function () {
+          window.location.reload();
+        }, 7000);
+      </script>
+    <% } %>
+  </body>
+</html>

@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Run <%= run.id %></title>
+    <%- include("_styles") %>
+  </head>
+  <body>
+    <header>
+      <h1><%= reportMode ? "Client Report" : "Stored Run" %></h1>
+      <p class="muted">
+        <%= site?.label || run.url %> · <%= client?.name || "Default Client" %> · <%= run.scanMode %> / <%= run.formFactor %>
+      </p>
+      <% if (!reportMode) { %>
+        <nav>
+          <a href="/">Dashboard</a>
+          <% if (site) { %><a href="/sites/<%= site.id %>">Site</a><% } %>
+          <a href="/reports/<%= run.id %>">Print View</a>
+          <a href="/exports/<%= run.id %>">CSV Export</a>
+          <a href="/api/runs/<%= run.id %>">Run JSON</a>
+        </nav>
+      <% } %>
+    </header>
+
+    <section class="panel">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <h2>Run Summary</h2>
+          <p class="muted small"><%= run.url %></p>
+        </div>
+        <span class="status-pill <%= run.status %>"><%= run.status %></span>
+      </div>
+      <div class="inline-meta">
+        <div><strong>Created</strong><br /><%= formatDate(run.createdAt) %></div>
+        <div><strong>Completed</strong><br /><%= formatDate(run.completedAt) || "—" %></div>
+        <div><strong>Artifact</strong><br /><%= run.artifactPath || "—" %></div>
+      </div>
+      <% if (!reportMode) { %>
+        <div class="section-actions no-print">
+          <a class="button-link" href="/reports/<%= run.id %>">Open Print View</a>
+          <a class="button-link secondary" href="/exports/<%= run.id %>">Download CSV</a>
+        </div>
+      <% } %>
+    </section>
+
+    <% if (run.aiInsights) { %>
+      <section class="panel">
+        <h2>AI Insights</h2>
+        <p class="muted small">Source: <%= run.aiInsights.source %></p>
+        <div class="grid">
+          <div class="card">
+            <h3>Executive Summary</h3>
+            <ul>
+              <% (run.aiInsights.executiveSummary || []).forEach(function (item) { %>
+                <li><%= item %></li>
+              <% }); %>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Stakeholder Summary</h3>
+            <p><%= run.aiInsights.stakeholderSummary %></p>
+          </div>
+        </div>
+
+        <% if (run.aiInsights.priorities?.length) { %>
+          <div class="card">
+            <h3>Prioritized Actions</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Action</th>
+                  <th>Why</th>
+                  <th>Effort</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% run.aiInsights.priorities.forEach(function (item) { %>
+                  <tr>
+                    <td><%= item.title %></td>
+                    <td><%= item.rationale %></td>
+                    <td><%= item.effort %></td>
+                  </tr>
+                <% }); %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+
+        <% if (run.aiInsights.patterns?.length) { %>
+          <div class="card">
+            <h3>Patterns</h3>
+            <ul>
+              <% run.aiInsights.patterns.forEach(function (item) { %>
+                <li><strong><%= item.label %>:</strong> <%= item.detail %></li>
+              <% }); %>
+            </ul>
+          </div>
+        <% } %>
+      </section>
+    <% } %>
+
+    <% if (run.scanMode === "single") { %>
+      <section class="panel">
+        <h2>Single Page Scores</h2>
+        <div class="score-grid">
+          <div class="score"><div>Overall</div><strong><%= run.summary?.overall ?? "—" %></strong></div>
+          <div class="score"><div>Performance</div><strong><%= run.summary?.categories?.performance ?? "—" %></strong></div>
+          <div class="score"><div>Accessibility</div><strong><%= run.summary?.categories?.accessibility ?? "—" %></strong></div>
+          <div class="score"><div>Best Practices</div><strong><%= run.summary?.categories?.bestPractices ?? "—" %></strong></div>
+          <div class="score"><div>SEO</div><strong><%= run.summary?.categories?.seo ?? "—" %></strong></div>
+        </div>
+
+        <div class="grid" style="margin-top: 1rem;">
+          <div class="card">
+            <h3>Core Metrics</h3>
+            <p><strong>LCP:</strong> <%= run.summary?.metrics?.lcpMs ?? "—" %> ms</p>
+            <p><strong>CLS:</strong> <%= run.summary?.metrics?.cls ?? "—" %></p>
+            <p><strong>TBT:</strong> <%= run.summary?.metrics?.tbtMs ?? "—" %> ms</p>
+            <p><strong>FCP:</strong> <%= run.summary?.metrics?.fcpMs ?? "—" %> ms</p>
+          </div>
+          <div class="card">
+            <h3>Trend Vs Previous Run</h3>
+            <% if (!run.diff) { %>
+              <p class="muted">No previous comparable run saved yet.</p>
+            <% } else { %>
+              <p><strong>Overall delta:</strong> <%= run.diff.overallDelta %></p>
+              <ul>
+                <% Object.entries(run.diff.categories || {}).forEach(function (entry) { %>
+                  <li><strong><%= entry[0] %>:</strong> <%= entry[1] %></li>
+                <% }); %>
+                <% Object.entries(run.diff.metrics || {}).forEach(function (entry) { %>
+                  <li><strong><%= entry[0] %>:</strong> <%= entry[1] %></li>
+                <% }); %>
+              </ul>
+            <% } %>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Top Opportunities</h3>
+          <% if (!artifact?.topOpportunities?.length) { %>
+            <p class="muted">No opportunity details were preserved for this run.</p>
+          <% } else { %>
+            <table>
+              <thead>
+                <tr>
+                  <th>Audit</th>
+                  <th>Display</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% artifact.topOpportunities.forEach(function (item) { %>
+                  <tr>
+                    <td><%= item.title %></td>
+                    <td><%= item.displayValue || "—" %></td>
+                    <td class="num"><%= item.score != null ? item.score : "—" %></td>
+                  </tr>
+                <% }); %>
+              </tbody>
+            </table>
+          <% } %>
+        </div>
+      </section>
+    <% } else { %>
+      <section class="panel">
+        <h2>Full Site Summary</h2>
+        <div class="score-grid">
+          <div class="score"><div>Average Overall</div><strong><%= run.summary?.avgScores?.overall ?? "—" %></strong></div>
+          <div class="score"><div>Average Perf</div><strong><%= run.summary?.avgScores?.performance ?? "—" %></strong></div>
+          <div class="score"><div>Average A11y</div><strong><%= run.summary?.avgScores?.accessibility ?? "—" %></strong></div>
+          <div class="score"><div>Average BP</div><strong><%= run.summary?.avgScores?.bestPractices ?? "—" %></strong></div>
+          <div class="score"><div>Average SEO</div><strong><%= run.summary?.avgScores?.seo ?? "—" %></strong></div>
+          <div class="score"><div>Routes</div><strong><%= run.summary?.routeCount ?? pages.length %></strong></div>
+        </div>
+
+        <div class="grid" style="margin-top: 1rem;">
+          <div class="card">
+            <h3>Trend Vs Previous Run</h3>
+            <% if (!run.diff) { %>
+              <p class="muted">No previous comparable run saved yet.</p>
+            <% } else { %>
+              <p><strong>Route delta:</strong> <%= run.diff.routeCountDelta %></p>
+              <p><strong>Improved pages:</strong> <%= run.diff.improvedPages %></p>
+              <p><strong>Regressed pages:</strong> <%= run.diff.regressedPages %></p>
+              <p><strong>New pages:</strong> <%= run.diff.newPages %></p>
+            <% } %>
+          </div>
+          <div class="card">
+            <h3>Cross-Page Issues</h3>
+            <% if (!artifact?.topIssues?.length) { %>
+              <p class="muted">No cross-page issue summary saved.</p>
+            <% } else { %>
+              <ul>
+                <% artifact.topIssues.forEach(function (issue) { %>
+                  <li><strong><%= issue.title %>:</strong> <%= issue.pages %> pages</li>
+                <% }); %>
+              </ul>
+            <% } %>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Lowest Scoring Pages</h3>
+          <% if (!run.summary?.lowPages?.length) { %>
+            <p class="muted">No page summaries stored.</p>
+          <% } else { %>
+            <table>
+              <thead>
+                <tr>
+                  <th>URL</th>
+                  <th class="num">Overall</th>
+                  <th class="num">Perf</th>
+                  <th class="num">A11y</th>
+                  <th class="num">BP</th>
+                  <th class="num">SEO</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% run.summary.lowPages.forEach(function (page) { %>
+                  <tr>
+                    <td class="url"><%= page.url %></td>
+                    <td class="num"><%= page.overall ?? "—" %></td>
+                    <td class="num"><%= page.performance ?? "—" %></td>
+                    <td class="num"><%= page.accessibility ?? "—" %></td>
+                    <td class="num"><%= page.bestPractices ?? "—" %></td>
+                    <td class="num"><%= page.seo ?? "—" %></td>
+                  </tr>
+                <% }); %>
+              </tbody>
+            </table>
+          <% } %>
+        </div>
+
+        <div class="card">
+          <h3>All Pages</h3>
+          <div class="row no-print">
+            <div class="field" style="flex: 1;">
+              <label for="results-search">Search</label>
+              <input id="results-search" type="search" placeholder="Filter by URL or status..." />
+            </div>
+            <div class="field">
+              <label for="results-min-score">Min Overall</label>
+              <input id="results-min-score" type="number" min="0" max="100" step="1" />
+            </div>
+          </div>
+          <table id="site-results-table">
+            <thead>
+              <tr>
+                <th>URL</th>
+                <th>Status</th>
+                <th class="num">Perf</th>
+                <th class="num">A11y</th>
+                <th class="num">BP</th>
+                <th class="num">SEO</th>
+                <th class="num">Overall</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% pages.forEach(function (page) { %>
+                <tr data-url="<%= page.url %>" data-status="<%= page.status %>" data-overall="<%= page.overall != null ? page.overall : "" %>">
+                  <td class="url"><%= page.url %></td>
+                  <td><%= page.status %></td>
+                  <td class="num"><%= page.performance ?? "—" %></td>
+                  <td class="num"><%= page.accessibility ?? "—" %></td>
+                  <td class="num"><%= page.bestPractices ?? "—" %></td>
+                  <td class="num"><%= page.seo ?? "—" %></td>
+                  <td class="num"><%= page.overall ?? "—" %></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    <% } %>
+
+    <% if (alerts?.length) { %>
+      <section class="panel">
+        <h2>Alerts Fired</h2>
+        <ul class="list-clean">
+          <% alerts.forEach(function (alert) { %>
+            <li>
+              <strong><%= alert.title %></strong><br />
+              <span class="muted small"><%= formatDate(alert.createdAt) %></span>
+              <p class="small"><%= alert.message %></p>
+            </li>
+          <% }); %>
+        </ul>
+      </section>
+    <% } %>
+
+    <% if (reportMode) { %>
+      <div class="section-actions no-print">
+        <button type="button" onclick="window.print()">Print / Save PDF</button>
+        <a class="button-link secondary" href="/runs/<%= run.id %>">Back To App View</a>
+      </div>
+    <% } %>
+
+    <script>
+      (function () {
+        var table = document.getElementById("site-results-table");
+        var search = document.getElementById("results-search");
+        var minScore = document.getElementById("results-min-score");
+        if (!table || !search || !minScore) return;
+        var rows = Array.prototype.slice.call(table.querySelectorAll("tbody tr"));
+        var applyFilter = function () {
+          var q = (search.value || "").trim().toLowerCase();
+          var min = Number(minScore.value);
+          var hasMin = !Number.isNaN(minScore.valueAsNumber) && minScore.value !== "";
+          rows.forEach(function (row) {
+            var url = (row.getAttribute("data-url") || "").toLowerCase();
+            var status = (row.getAttribute("data-status") || "").toLowerCase();
+            var overallRaw = row.getAttribute("data-overall");
+            var overall = overallRaw === "" ? null : Number(overallRaw);
+            var matchesText = !q || url.indexOf(q) !== -1 || status.indexOf(q) !== -1;
+            var matchesScore = !hasMin || (overall !== null && !Number.isNaN(overall) && overall >= min);
+            row.style.display = matchesText && matchesScore ? "" : "none";
+          });
+        };
+        search.addEventListener("input", applyFilter);
+        minScore.addEventListener("input", applyFilter);
+      })();
+    </script>
+  </body>
+</html>

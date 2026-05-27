@@ -1,88 +1,42 @@
-import express from "express";
 import compression from "compression";
+import express from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import lighthouse from "lighthouse";
-import { launch as launchChrome } from "chrome-launcher";
-import * as lhConstants from "lighthouse/core/config/constants.js";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import { readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import {
+  createOrUpdateSiteMonitor,
+  getSiteClient,
+  initAutomation,
+  isQueueBusy,
+  submitScanJob,
+} from "./lib/automation.js";
+import { runToCsv } from "./lib/reporting.js";
+import { normalizeFormFactor, normalizeScanMode, normalizeTarget, scanErrorMessage } from "./lib/scanner.js";
+import {
+  deleteSite,
+  getClient,
+  getJob,
+  getRun,
+  getSite,
+  initStore,
+  listAlerts,
+  listJobs,
+  listPageResultsForRun,
+  listRuns,
+  listRunsForSite,
+  listSites,
+  markStaleJobsFailed,
+  readArtifact,
+  updateSite,
+} from "./lib/store.js";
 import { assertPublicScanTarget } from "./lib/url-scan-policy.js";
 
 const app = express();
 const isProd = process.env.NODE_ENV === "production";
-if (isProd || process.env.TRUST_PROXY === "1") {
-  app.set("trust proxy", 1);
-}
-
 const PORT = Number(process.env.PORT) || 4173;
-const PROJECT_ROOT = dirname(fileURLToPath(import.meta.url));
-
 const SITE_SCAN_TIMEOUT_MS = Number(process.env.SITE_SCAN_TIMEOUT_MS) || 45 * 60 * 1000;
 
-/** @typedef {"mobile" | "desktop"} FormFactor */
-/** @typedef {"single" | "site"} ScanMode */
-
-const CHROME_FLAGS = [
-  "--headless=new",
-  "--no-sandbox",
-  "--disable-dev-shm-usage",
-  "--disable-gpu",
-];
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function scanErrorMessage(err) {
-  if (err.code === "SCAN_BUSY") {
-    return "Another scan is still running. Wait until it finishes, then try again.";
-  }
-  if (err.code === "BLOCKED_HOST" || err.code === "BLOCKED_URL") {
-    return (
-      "That URL is not allowed (internal or non-public host). " +
-      "For local testing, set ALLOW_INTERNAL_SCANS=true in the environment."
-    );
-  }
-  if (err.code === "DNS_FAILED") {
-    return "Could not resolve that hostname. Check the URL and try again.";
-  }
-  if (String(err.message || "").includes("Context conflict")) {
-    return "Scanner context error. Restart the server and try again, or update dependencies.";
-  }
-  if (err.code === "ECONNREFUSED" || /ECONNREFUSED/i.test(String(err.message))) {
-    return (
-      "Could not connect to Chrome's debugging port (the browser closed or never became ready). " +
-      "Install Google Chrome or Chromium, or set CHROME_PATH to your browser binary. " +
-      "Close other Chrome instances and try again."
-    );
-  }
-  return err.message;
-}
-
-let scanInProgress = false;
-
-/**
- * Runs at most one Lighthouse scan at a time so Chrome/RAM is not overloaded.
- * @template T
- * @param {() => Promise<T>} fn
- * @returns {Promise<T>}
- */
-async function runExclusiveScan(fn) {
-  if (scanInProgress) {
-    const err = new Error("SCAN_BUSY");
-    err.code = "SCAN_BUSY";
-    throw err;
-  }
-  scanInProgress = true;
-  try {
-    return await fn();
-  } finally {
-    scanInProgress = false;
-  }
+if (isProd || process.env.TRUST_PROXY === "1") {
+  app.set("trust proxy", 1);
 }
 
 app.disable("x-powered-by");
@@ -94,7 +48,8 @@ app.use(
 );
 app.use(compression());
 app.set("view engine", "ejs");
-app.use(express.urlencoded({ extended: true, limit: "32kb" }));
+app.use(express.urlencoded({ extended: true, limit: "64kb" }));
+app.use(express.json({ limit: "64kb" }));
 
 const scanLimiter = rateLimit({
   windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
@@ -102,334 +57,416 @@ const scanLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => process.env.RATE_LIMIT_DISABLED === "true",
-  handler: (req, res) => {
-    res.status(429).render("index", {
-      result: null,
-      siteScan: null,
+  handler: async (req, res) => {
+    return renderIndex(res, {
       error: "Too many scan requests from this address. Please wait a few minutes.",
-      submittedUrl: (req.body?.url || "").toString(),
-      formFactor: normalizeFormFactor(req.body?.formFactor),
-      scanMode: normalizeScanMode(req.body?.scanMode),
-      isProd,
+      formDefaults: formDefaultsFromBody(req.body),
+      statusCode: 429,
     });
   },
 });
 
-function normalizeTarget(input) {
-  if (!input || typeof input !== "string") return "";
-  const trimmed = input.trim();
-  if (!trimmed) return "";
-
-  try {
-    const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-    const url = new URL(candidate);
-    if (!["http:", "https:"].includes(url.protocol)) return "";
-    if (url.username || url.password) return "";
-    return url.toString();
-  } catch {
-    return "";
-  }
-}
-
-/** @param {unknown} raw */
-function normalizeFormFactor(raw) {
-  const s = String(raw || "").toLowerCase();
-  if (s === "desktop") return "desktop";
-  return "mobile";
-}
-
-/** @param {unknown} raw */
-function normalizeScanMode(raw) {
-  const s = String(raw || "").toLowerCase();
-  if (s === "site" || s === "full") return "site";
-  return "single";
-}
-
-/** @param {FormFactor} formFactor */
-function lighthouseFormSettings(formFactor) {
-  if (formFactor === "desktop") {
-    return {
-      formFactor: "desktop",
-      throttling: lhConstants.throttling.desktopDense4G,
-      screenEmulation: lhConstants.screenEmulationMetrics.desktop,
-      emulatedUserAgent: lhConstants.userAgents.desktop,
-    };
-  }
+function parseThresholds(body) {
+  const n = (value, fallback) => {
+    if (value === undefined || value === null || value === "") return fallback;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+  };
   return {
-    formFactor: "mobile",
-    throttling: lhConstants.throttling.mobileSlow4G,
-    screenEmulation: lhConstants.screenEmulationMetrics.mobile,
-    emulatedUserAgent: lhConstants.userAgents.mobile,
+    minPerformance: n(body.minPerformance, 80),
+    minAccessibility: n(body.minAccessibility, 85),
+    minBestPractices: n(body.minBestPractices, 85),
+    minSeo: n(body.minSeo, 85),
+    minOverall: n(body.minOverall, 80),
+    maxLcpMs: n(body.maxLcpMs, 2500),
+    maxCls: n(body.maxCls, 0.1),
   };
 }
 
-/** @param {string} url @param {FormFactor} formFactor */
-async function runLighthouseScanOnce(url, formFactor) {
-  const chrome = await launchChrome({
-    chromePath: process.env.CHROME_PATH || undefined,
-    chromeFlags: CHROME_FLAGS,
-    maxConnectionRetries: 100,
-    connectionPollInterval: 100,
-  });
+function formDefaultsFromBody(body = {}) {
+  return {
+    submittedUrl: String(body.url || ""),
+    clientName: String(body.clientName || "Default Client"),
+    siteLabel: String(body.siteLabel || ""),
+    formFactor: normalizeFormFactor(body.formFactor),
+    scanMode: normalizeScanMode(body.scanMode),
+    scheduleFrequency: normalizeScheduleFrequency(body.scheduleFrequency),
+    alertWebhookUrl: String(body.alertWebhookUrl || ""),
+    thresholds: parseThresholds(body),
+  };
+}
 
+function normalizeScheduleFrequency(value) {
+  const s = String(value || "off").toLowerCase();
+  return ["off", "daily", "weekly"].includes(s) ? s : "off";
+}
+
+function formatDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString();
+}
+
+function routeToRunUrl(job) {
+  if (job?.runId) return `/runs/${job.runId}`;
+  return null;
+}
+
+async function renderIndex(res, overrides = {}) {
+  const context = {
+    isProd,
+    queueBusy: isQueueBusy(),
+    sites: listSites(),
+    recentJobs: listJobs(12),
+    recentRuns: listRuns(12),
+    recentAlerts: listAlerts(12),
+    error: null,
+    notice: null,
+    formDefaults: {
+      submittedUrl: "",
+      clientName: "Default Client",
+      siteLabel: "",
+      formFactor: "mobile",
+      scanMode: "single",
+      scheduleFrequency: "off",
+      alertWebhookUrl: "",
+      thresholds: parseThresholds({}),
+    },
+    formatDate,
+    ...overrides,
+  };
+  return res.status(overrides.statusCode || 200).render("index", context);
+}
+
+async function buildRunView(runId) {
+  const run = getRun(runId);
+  if (!run) return null;
+  const site = run.siteId ? getSite(run.siteId) : null;
+  const client = run.clientId ? getClient(run.clientId) : site ? getSiteClient(site) : null;
+  const pages = listPageResultsForRun(run.id);
+  const artifact = await readArtifact(run);
+  const alerts = (run.alerts || []).map((alertId) => listAlerts(500).find((item) => item.id === alertId)).filter(Boolean);
+  return {
+    run,
+    site,
+    client,
+    pages,
+    artifact,
+    alerts,
+  };
+}
+
+async function validateTargetOrRender(res, defaults) {
+  const target = normalizeTarget(defaults.submittedUrl);
+  if (!target) {
+    await renderIndex(res, {
+      error: "Please enter a valid http(s) URL without embedded credentials.",
+      formDefaults: defaults,
+      statusCode: 400,
+    });
+    return null;
+  }
   try {
-    const result = await lighthouse(
-      url,
-      {
-        port: chrome.port,
-        output: "json",
-        onlyCategories: ["performance", "accessibility", "best-practices", "seo"],
-        throttlingMethod: "simulate",
-        ...lighthouseFormSettings(formFactor),
-      },
-      undefined
-    );
-
-    const categories = result.lhr.categories;
-    const vitals = result.lhr.audits;
-    return {
-      device: formFactor,
-      finalUrl: result.lhr.finalDisplayedUrl || result.lhr.finalUrl,
-      categories: {
-        performance: Math.round((categories.performance?.score || 0) * 100),
-        accessibility: Math.round((categories.accessibility?.score || 0) * 100),
-        bestPractices: Math.round((categories["best-practices"]?.score || 0) * 100),
-        seo: Math.round((categories.seo?.score || 0) * 100),
-      },
-      metrics: {
-        lcp: vitals["largest-contentful-paint"]?.displayValue || "n/a",
-        cls: vitals["cumulative-layout-shift"]?.displayValue || "n/a",
-        tbt: vitals["total-blocking-time"]?.displayValue || "n/a",
-        fcp: vitals["first-contentful-paint"]?.displayValue || "n/a",
-      },
-    };
-  } finally {
-    await chrome.kill();
+    await assertPublicScanTarget(target);
+    return target;
+  } catch (err) {
+    const code = err && typeof err === "object" && "code" in err ? err.code : undefined;
+    await renderIndex(res, {
+      error: code === "BLOCKED_HOST" || code === "DNS_FAILED" ? scanErrorMessage(err) : `Invalid target: ${err.message}`,
+      formDefaults: { ...defaults, submittedUrl: target },
+      statusCode: code === "BLOCKED_HOST" ? 403 : 400,
+    });
+    return null;
   }
-}
-
-/** @param {string} url @param {FormFactor} formFactor */
-async function runLighthouseScan(url, formFactor) {
-  const maxAttempts = 3;
-  let lastErr;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      return await runLighthouseScanOnce(url, formFactor);
-    } catch (err) {
-      lastErr = err;
-      const transient =
-        err.code === "ECONNREFUSED" || /ECONNREFUSED/i.test(String(err.message || ""));
-      if (transient && attempt < maxAttempts) {
-        console.warn(`Lighthouse attempt ${attempt} failed (${err.message}), retrying…`);
-        await sleep(750 * attempt);
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw lastErr;
-}
-
-/**
- * Full-site scan runs in a child process so @unlighthouse/core's unctx state cannot conflict
- * across repeated scans (fixes "Context conflict").
- * @param {string} siteUrl
- * @param {FormFactor} formFactor
- */
-async function runSiteWideScan(siteUrl, formFactor) {
-  const outFile = join(tmpdir(), `uls-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
-  const workerScript = join(PROJECT_ROOT, "scripts", "run-site-scan-worker.mjs");
-  const ff = formFactor === "desktop" ? "desktop" : "mobile";
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [workerScript, siteUrl, ff, outFile], {
-      cwd: PROJECT_ROOT,
-      env: { ...process.env, PROJECT_ROOT },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stderr = "";
-    child.stderr?.on("data", (d) => {
-      stderr += d.toString();
-    });
-
-    const hardKillMs = SITE_SCAN_TIMEOUT_MS + 120_000;
-    const timer = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
-    }, hardKillMs);
-
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      (async () => {
-        try {
-          const raw = await readFile(outFile, "utf8");
-          await rm(outFile, { force: true }).catch(() => {});
-          const j = JSON.parse(raw);
-          if (!j.ok) {
-            const err = new Error(j.error || "Site scan failed");
-            if (j.code) err.code = j.code;
-            reject(err);
-            return;
-          }
-          if (!j.result) {
-            reject(new Error("Invalid site scan worker response"));
-            return;
-          }
-          resolve(j.result);
-        } catch (parseErr) {
-          await rm(outFile, { force: true }).catch(() => {});
-          reject(
-            new Error(
-              code !== 0
-                ? stderr.trim().slice(0, 2000) || `Site scan worker exited with code ${code}`
-                : String(parseErr instanceof Error ? parseErr.message : parseErr)
-            )
-          );
-        }
-      })();
-    });
-  });
 }
 
 app.get("/health", (req, res) => {
   res.status(200).json({
     ok: true,
-    scanBusy: scanInProgress,
+    queueBusy: isQueueBusy(),
+    jobsTracked: listJobs(500).length,
     uptime: process.uptime(),
   });
 });
 
-app.get("/", (req, res) => {
-  res.render("index", {
-    result: null,
-    siteScan: null,
-    error: null,
-    submittedUrl: "",
-    formFactor: "mobile",
-    scanMode: "single",
-    isProd,
-  });
+app.get("/", async (req, res) => {
+  const notice = String(req.query.notice || "").trim() || null;
+  const error = String(req.query.error || "").trim() || null;
+  await renderIndex(res, { notice, error });
 });
 
 app.post("/scan", scanLimiter, async (req, res) => {
-  const submittedUrl = (req.body.url || "").toString();
-  const formFactor = normalizeFormFactor(req.body.formFactor);
-  const scanMode = normalizeScanMode(req.body.scanMode);
-  const target = normalizeTarget(submittedUrl);
-  if (!target) {
-    return res.status(400).render("index", {
-      result: null,
-      siteScan: null,
-      error: "Please enter a valid http(s) URL without embedded credentials.",
-      submittedUrl,
-      formFactor,
-      scanMode,
-      isProd,
-    });
-  }
-
+  const defaults = formDefaultsFromBody(req.body);
+  const target = await validateTargetOrRender(res, defaults);
+  if (!target) return;
   try {
-    await assertPublicScanTarget(target);
-  } catch (err) {
-    const e = err instanceof Error ? err : new Error(String(err));
-    const code = "code" in e ? e.code : undefined;
-    if (code === "BLOCKED_HOST") {
-      return res.status(403).render("index", {
-        result: null,
-        siteScan: null,
-        error: scanErrorMessage(e),
-        submittedUrl: target,
-        formFactor,
-        scanMode,
-        isProd,
-      });
-    }
-    if (code === "DNS_FAILED") {
-      return res.status(400).render("index", {
-        result: null,
-        siteScan: null,
-        error: scanErrorMessage(e),
-        submittedUrl: target,
-        formFactor,
-        scanMode,
-        isProd,
-      });
-    }
-    return res.status(400).render("index", {
-      result: null,
-      siteScan: null,
-      error: `Invalid target: ${e.message}`,
-      submittedUrl: target,
-      formFactor,
-      scanMode,
-      isProd,
+    const job = await submitScanJob({
+      clientName: defaults.clientName,
+      label: defaults.siteLabel,
+      url: target,
+      scanMode: defaults.scanMode,
+      formFactor: defaults.formFactor,
+      scheduleFrequency: defaults.scheduleFrequency,
+      thresholds: defaults.thresholds,
+      alertWebhookUrl: defaults.alertWebhookUrl,
+      source: "manual",
     });
-  }
-
-  const renderCtx = {
-    submittedUrl: target,
-    formFactor,
-    scanMode,
-    isProd,
-  };
-
-  try {
-    if (scanMode === "site") {
-      const siteScan = await runExclusiveScan(() => runSiteWideScan(target, formFactor));
-      return res.render("index", { ...renderCtx, result: null, siteScan, error: null });
-    }
-    const result = await runExclusiveScan(() => runLighthouseScan(target, formFactor));
-    return res.render("index", { ...renderCtx, result, siteScan: null, error: null });
+    return res.redirect(`/jobs/${job.id}`);
   } catch (err) {
-    const code = err && typeof err === "object" && "code" in err ? err.code : undefined;
-    if (code === "SCAN_BUSY") {
-      return res.status(503).render("index", {
-        ...renderCtx,
-        result: null,
-        siteScan: null,
-        error: scanErrorMessage(err),
-      });
-    }
-    console.error("Scan error:", err);
-    return res.status(500).render("index", {
-      ...renderCtx,
-      result: null,
-      siteScan: null,
+    console.error("Queue error:", err);
+    return renderIndex(res, {
       error: `Scan failed: ${scanErrorMessage(err)}`,
+      formDefaults: { ...defaults, submittedUrl: target },
+      statusCode: 500,
     });
   }
 });
 
-const server = app.listen(PORT, () => {
-  console.log(
-    `Lighthouse Scanner listening on port ${PORT} (${isProd ? "production" : "development"}) — health: http://localhost:${PORT}/health`
-  );
+app.post("/sites", scanLimiter, async (req, res) => {
+  const defaults = formDefaultsFromBody(req.body);
+  const target = await validateTargetOrRender(res, defaults);
+  if (!target) return;
+  try {
+    const site = await createOrUpdateSiteMonitor({
+      clientName: defaults.clientName,
+      label: defaults.siteLabel || new URL(target).hostname,
+      url: target,
+      scanMode: defaults.scanMode,
+      formFactor: defaults.formFactor,
+      schedule: {
+        frequency: defaults.scheduleFrequency,
+        nextRunAt: defaults.scheduleFrequency !== "off" ? null : null,
+      },
+      thresholds: defaults.thresholds,
+      alertWebhookUrl: defaults.alertWebhookUrl,
+    });
+    return res.redirect(`/sites/${site.id}`);
+  } catch (err) {
+    console.error("Site save error:", err);
+    return renderIndex(res, {
+      error: `Could not save site monitor: ${scanErrorMessage(err)}`,
+      formDefaults: { ...defaults, submittedUrl: target },
+      statusCode: 500,
+    });
+  }
 });
 
-server.timeout = SITE_SCAN_TIMEOUT_MS + 120000;
-server.headersTimeout = SITE_SCAN_TIMEOUT_MS + 120000;
-server.requestTimeout = SITE_SCAN_TIMEOUT_MS + 120000;
+app.post("/sites/:id/run", scanLimiter, async (req, res) => {
+  const site = getSite(req.params.id);
+  if (!site) {
+    return res.status(404).send("Site not found.");
+  }
+  try {
+    const job = await submitScanJob({
+      siteId: site.id,
+      url: site.url,
+      scanMode: site.scanMode,
+      formFactor: site.defaultFormFactor,
+      source: "manual",
+    });
+    return res.redirect(`/jobs/${job.id}`);
+  } catch (err) {
+    return res.status(500).send(`Could not queue run: ${scanErrorMessage(err)}`);
+  }
+});
 
-function shutdown(signal) {
-  console.log(`Received ${signal}, closing server…`);
-  server.close(() => {
-    console.log("HTTP server closed.");
-    process.exit(0);
-  });
-  setTimeout(() => {
-    console.error("Forced exit after timeout.");
-    process.exit(1);
-  }, 15_000).unref();
+async function handleDeleteSite(req, res, { redirect = true } = {}) {
+  try {
+    const result = await deleteSite(req.params.id);
+    if (!result) {
+      if (redirect) return res.status(404).send("Site not found.");
+      return res.status(404).json({ error: "Site not found" });
+    }
+    if (redirect) {
+      const message = `Deleted "${result.label}" and ${result.deletedRuns} scan run(s).`;
+      return res.redirect(`/?notice=${encodeURIComponent(message)}`);
+    }
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    if (err.code === "SITE_BUSY") {
+      const message = "Cannot delete this site while a scan is queued or running.";
+      if (redirect) {
+        const site = getSite(req.params.id);
+        if (site) {
+          return res.redirect(`/sites/${site.id}?error=${encodeURIComponent(message)}`);
+        }
+        return res.redirect(`/?error=${encodeURIComponent(message)}`);
+      }
+      return res.status(409).json({ error: message });
+    }
+    console.error("Site delete error:", err);
+    if (redirect) return res.status(500).send(`Could not delete site: ${scanErrorMessage(err)}`);
+    return res.status(500).json({ error: scanErrorMessage(err) });
+  }
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+app.post("/sites/:id/delete", async (req, res) => {
+  return handleDeleteSite(req, res, { redirect: true });
+});
+
+app.post("/sites/:id/settings", async (req, res) => {
+  const site = getSite(req.params.id);
+  if (!site) {
+    return res.status(404).send("Site not found.");
+  }
+  const nextSite = await updateSite(site.id, {
+    label: req.body.label,
+    url: normalizeTarget(req.body.url) || site.url,
+    scanMode: normalizeScanMode(req.body.scanMode),
+    defaultFormFactor: normalizeFormFactor(req.body.formFactor),
+    schedule: {
+      frequency: normalizeScheduleFrequency(req.body.scheduleFrequency),
+      nextRunAt: site.schedule?.nextRunAt || null,
+    },
+    thresholds: parseThresholds(req.body),
+    alertChannels: {
+      webhookUrl: String(req.body.alertWebhookUrl || ""),
+    },
+  });
+  return res.redirect(`/sites/${nextSite.id}`);
+});
+
+app.get("/sites/:id", async (req, res) => {
+  const site = getSite(req.params.id);
+  if (!site) {
+    return res.status(404).send("Site not found.");
+  }
+  const error = String(req.query.error || "").trim() || null;
+  res.render("site", {
+    isProd,
+    site,
+    client: getClient(site.clientId),
+    runs: listRunsForSite(site.id, 25),
+    alerts: listAlerts(100).filter((alert) => alert.siteId === site.id).slice(0, 20),
+    error,
+    formatDate,
+  });
+});
+
+app.get("/jobs/:id", async (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) {
+    return res.status(404).send("Job not found.");
+  }
+  const runView = job.runId ? await buildRunView(job.runId) : null;
+  res.render("job", {
+    isProd,
+    job,
+    run: runView?.run || null,
+    runUrl: routeToRunUrl(job),
+    site: job.siteId ? getSite(job.siteId) : null,
+    formatDate,
+  });
+});
+
+app.get("/runs/:id", async (req, res) => {
+  const view = await buildRunView(req.params.id);
+  if (!view) {
+    return res.status(404).send("Run not found.");
+  }
+  res.render("run", {
+    isProd,
+    ...view,
+    reportMode: false,
+    formatDate,
+  });
+});
+
+app.get("/exports/:id", async (req, res) => {
+  const view = await buildRunView(req.params.id);
+  if (!view) {
+    return res.status(404).send("Run not found.");
+  }
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${view.run.id}.csv"`);
+  return res.send(runToCsv(view.run, view.pages));
+});
+
+app.get("/reports/:id", async (req, res) => {
+  const view = await buildRunView(req.params.id);
+  if (!view) {
+    return res.status(404).send("Run not found.");
+  }
+  if (String(req.query?.format || "").toLowerCase() === "csv" || String(req.originalUrl || "").includes("format=csv")) {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${view.run.id}.csv"`);
+    return res.send(runToCsv(view.run, view.pages));
+  }
+  res.render("run", {
+    isProd,
+    ...view,
+    reportMode: true,
+    formatDate,
+  });
+});
+
+app.get("/api/jobs/:id", async (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  return res.json({
+    job,
+    run: job.runId ? getRun(job.runId) : null,
+  });
+});
+
+app.get("/api/runs", async (req, res) => {
+  return res.json({ runs: listRuns(50) });
+});
+
+app.get("/api/runs/:id", async (req, res) => {
+  const view = await buildRunView(req.params.id);
+  if (!view) return res.status(404).json({ error: "Run not found" });
+  return res.json(view);
+});
+
+app.get("/api/sites/:id", async (req, res) => {
+  const site = getSite(req.params.id);
+  if (!site) return res.status(404).json({ error: "Site not found" });
+  return res.json({
+    site,
+    client: getClient(site.clientId),
+    runs: listRunsForSite(site.id, 50),
+    alerts: listAlerts(200).filter((alert) => alert.siteId === site.id),
+  });
+});
+
+app.delete("/api/sites/:id", async (req, res) => {
+  return handleDeleteSite(req, res, { redirect: false });
+});
+
+async function bootstrap() {
+  await initStore();
+  await markStaleJobsFailed();
+  initAutomation();
+
+  const server = app.listen(PORT, () => {
+    console.log(
+      `Lighthouse Scanner listening on port ${PORT} (${isProd ? "production" : "development"}) — health: http://localhost:${PORT}/health`
+    );
+  });
+
+  server.timeout = SITE_SCAN_TIMEOUT_MS + 120000;
+  server.headersTimeout = SITE_SCAN_TIMEOUT_MS + 120000;
+  server.requestTimeout = SITE_SCAN_TIMEOUT_MS + 120000;
+
+  function shutdown(signal) {
+    console.log(`Received ${signal}, closing server…`);
+    server.close(() => {
+      console.log("HTTP server closed.");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error("Forced exit after timeout.");
+      process.exit(1);
+    }, 15_000).unref();
+  }
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
+
+bootstrap().catch((err) => {
+  console.error("Server bootstrap failed:", err);
+  process.exit(1);
+});

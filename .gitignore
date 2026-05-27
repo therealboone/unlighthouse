@@ -9,3 +9,4 @@ pnpm-debug.log*
 .unlighthouse/
 coverage/
 dist/
+data/

@@ -46,6 +46,34 @@ function scoresFromUnlighthouseReport(report) {
   };
 }
 
+function summarizeAudit(auditId, audit) {
+  if (!audit) return null;
+  const rawValue = Number(audit.numericValue);
+  return {
+    id: auditId,
+    title: audit.title || auditId,
+    displayValue: audit.displayValue || "",
+    score: typeof audit.score === "number" ? Math.round(audit.score * 100) : null,
+    numericValue: Number.isFinite(rawValue) ? rawValue : null,
+    scoreDisplayMode: audit.scoreDisplayMode || "unknown",
+  };
+}
+
+function extractTopOpportunities(report, limit = 5) {
+  const audits = report?.audits || {};
+  return Object.entries(audits)
+    .map(([id, audit]) => summarizeAudit(id, audit))
+    .filter(Boolean)
+    .filter((audit) => audit.scoreDisplayMode !== "notApplicable")
+    .filter((audit) => audit.score === null || audit.score < 90)
+    .sort((a, b) => {
+      const aWeight = a.numericValue ?? Number.POSITIVE_INFINITY;
+      const bWeight = b.numericValue ?? Number.POSITIVE_INFINITY;
+      return aWeight - bWeight;
+    })
+    .slice(0, limit);
+}
+
 async function main() {
   const siteUrl = process.argv[2];
   const formFactor = process.argv[3] === "desktop" ? "desktop" : "mobile";
@@ -175,6 +203,19 @@ async function main() {
       })
       .sort((a, b) => a.url.localeCompare(b.url));
 
+    const reports = raw
+      .filter((r) => r.tasks.runLighthouseTask === "completed" && r.report)
+      .map((r) => ({
+        url: r.route.url,
+        status: "completed",
+        report: {
+          score: typeof r.report?.score === "number" ? r.report.score : null,
+          categories: r.report?.categories || null,
+        },
+        topOpportunities: extractTopOpportunities(r.report),
+      }))
+      .sort((a, b) => a.url.localeCompare(b.url));
+
     try {
       await ctx.worker.cluster.close();
     } catch {
@@ -190,6 +231,7 @@ async function main() {
         siteUrl,
         maxRoutes,
         rows,
+          reports,
         capped,
         routeCount: ctx.routes.length,
       },

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= site.label %></title>
+    <%- include("_styles") %>
+  </head>
+  <body>
+    <header>
+      <h1><%= site.label %></h1>
+      <p class="muted"><%= client?.name || "Default Client" %> · <%= site.url %></p>
+      <nav>
+        <a href="/">Dashboard</a>
+        <a href="/api/sites/<%= site.id %>">Site JSON</a>
+      </nav>
+    </header>
+
+    <% if (error) { %>
+      <div class="flash-error"><%= error %></div>
+    <% } %>
+
+    <section class="grid">
+      <div class="panel">
+        <h2>Monitor Settings</h2>
+        <form method="post" action="/sites/<%= site.id %>/settings">
+          <div class="field">
+            <label for="label">Label</label>
+            <input id="label" name="label" type="text" value="<%= site.label %>" />
+          </div>
+          <div class="field">
+            <label for="url">URL</label>
+            <input id="url" name="url" type="url" value="<%= site.url %>" />
+          </div>
+          <div class="grid">
+            <div class="field">
+              <label for="scanMode">Scope</label>
+              <select id="scanMode" name="scanMode">
+                <option value="single" <%= site.scanMode === "single" ? "selected" : "" %>>Single page</option>
+                <option value="site" <%= site.scanMode === "site" ? "selected" : "" %>>Full site</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="formFactor">Device</label>
+              <select id="formFactor" name="formFactor">
+                <option value="mobile" <%= site.defaultFormFactor === "mobile" ? "selected" : "" %>>Mobile</option>
+                <option value="desktop" <%= site.defaultFormFactor === "desktop" ? "selected" : "" %>>Desktop</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="scheduleFrequency">Schedule</label>
+              <select id="scheduleFrequency" name="scheduleFrequency">
+                <option value="off" <%= site.schedule?.frequency === "off" ? "selected" : "" %>>Off</option>
+                <option value="daily" <%= site.schedule?.frequency === "daily" ? "selected" : "" %>>Daily</option>
+                <option value="weekly" <%= site.schedule?.frequency === "weekly" ? "selected" : "" %>>Weekly</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="alertWebhookUrl">Alert webhook URL</label>
+            <input id="alertWebhookUrl" name="alertWebhookUrl" type="url" value="<%= site.alertChannels?.webhookUrl || "" %>" />
+          </div>
+
+          <h3>Thresholds</h3>
+          <div class="grid">
+            <div class="field">
+              <label for="minPerformance">Min Performance</label>
+              <input id="minPerformance" name="minPerformance" type="number" min="0" max="100" value="<%= site.thresholds.minPerformance %>" />
+            </div>
+            <div class="field">
+              <label for="minAccessibility">Min Accessibility</label>
+              <input id="minAccessibility" name="minAccessibility" type="number" min="0" max="100" value="<%= site.thresholds.minAccessibility %>" />
+            </div>
+            <div class="field">
+              <label for="minBestPractices">Min Best Practices</label>
+              <input id="minBestPractices" name="minBestPractices" type="number" min="0" max="100" value="<%= site.thresholds.minBestPractices %>" />
+            </div>
+            <div class="field">
+              <label for="minSeo">Min SEO</label>
+              <input id="minSeo" name="minSeo" type="number" min="0" max="100" value="<%= site.thresholds.minSeo %>" />
+            </div>
+            <div class="field">
+              <label for="minOverall">Min Overall</label>
+              <input id="minOverall" name="minOverall" type="number" min="0" max="100" value="<%= site.thresholds.minOverall %>" />
+            </div>
+            <div class="field">
+              <label for="maxLcpMs">Max LCP (ms)</label>
+              <input id="maxLcpMs" name="maxLcpMs" type="number" min="0" step="100" value="<%= site.thresholds.maxLcpMs %>" />
+            </div>
+            <div class="field">
+              <label for="maxCls">Max CLS</label>
+              <input id="maxCls" name="maxCls" type="number" min="0" step="0.01" value="<%= site.thresholds.maxCls %>" />
+            </div>
+          </div>
+
+          <div class="section-actions">
+            <button type="submit">Save Settings</button>
+          </div>
+        </form>
+
+        <div class="section-actions">
+          <form method="post" action="/sites/<%= site.id %>/run">
+            <button type="submit">Run Now</button>
+          </form>
+          <form
+            method="post"
+            action="/sites/<%= site.id %>/delete"
+            onsubmit="return confirm('Delete &quot;<%= site.label %>&quot; and all scan history? This cannot be undone.');"
+          >
+            <button type="submit" class="warn">Delete Site</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Monitor Summary</h2>
+        <div class="inline-meta">
+          <div><strong>Schedule</strong><br /><%= site.schedule?.frequency || "off" %></div>
+          <div><strong>Next Run</strong><br /><%= formatDate(site.schedule?.nextRunAt) || "When due" %></div>
+          <div><strong>Scope</strong><br /><%= site.scanMode %></div>
+          <div><strong>Device</strong><br /><%= site.defaultFormFactor %></div>
+        </div>
+
+        <h3>Recent Alerts</h3>
+        <% if (!alerts.length) { %>
+          <p class="muted">No alerts yet for this site.</p>
+        <% } else { %>
+          <ul class="list-clean">
+            <% alerts.forEach(function (alert) { %>
+              <li>
+                <strong><%= alert.title %></strong><br />
+                <span class="muted small"><%= formatDate(alert.createdAt) %></span>
+                <p class="small"><%= alert.message %></p>
+              </li>
+            <% }); %>
+          </ul>
+        <% } %>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Run History</h2>
+      <% if (!runs.length) { %>
+        <p class="muted">No runs stored yet.</p>
+      <% } else { %>
+        <table>
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Status</th>
+              <th>Overall</th>
+              <th>Completed</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% runs.forEach(function (run) { %>
+              <% const overall = run.scanMode === "site" ? run.summary?.avgScores?.overall : run.summary?.overall; %>
+              <tr>
+                <td><a href="/runs/<%= run.id %>"><%= run.scanMode %> / <%= run.formFactor %></a></td>
+                <td><span class="status-pill <%= run.status %>"><%= run.status %></span></td>
+                <td class="num"><%= overall != null ? overall : "—" %></td>
+                <td><%= formatDate(run.completedAt || run.createdAt) %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      <% } %>
+    </section>
+  </body>
+</html>
