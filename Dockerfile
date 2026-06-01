@@ -14,11 +14,11 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY scripts ./scripts
 RUN npm ci --omit=dev
 
 COPY server.js ./
 COPY lib ./lib
-COPY scripts ./scripts
 COPY views ./views
 
 # Railway sets PORT at runtime; default 4173 for local Docker.
