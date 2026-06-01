@@ -17,11 +17,14 @@
           <a href="/">Dashboard</a>
           <% if (site) { %><a href="/sites/<%= site.id %>">Site</a><% } %>
           <a href="/reports/<%= run.id %>">Print View</a>
-          <a href="/exports/<%= run.id %>">CSV Export</a>
+          <a href="/exports/<%= run.id %>">Scores CSV</a>
+          <a href="/exports/<%= run.id %>/csp">CSP CSV</a>
           <a href="/api/runs/<%= run.id %>">Run JSON</a>
         </nav>
       <% } %>
     </header>
+
+    <%- include("_csp-banner") %>
 
     <section class="panel">
       <div class="row" style="justify-content: space-between;">
@@ -39,10 +42,13 @@
       <% if (!reportMode) { %>
         <div class="section-actions no-print">
           <a class="button-link" href="/reports/<%= run.id %>">Open Print View</a>
-          <a class="button-link secondary" href="/exports/<%= run.id %>">Download CSV</a>
+          <a class="button-link secondary" href="/exports/<%= run.id %>">Download Scores CSV</a>
+          <a class="button-link secondary" href="/exports/<%= run.id %>/csp">Download CSP CSV</a>
         </div>
       <% } %>
     </section>
+
+    <%- include("_csp-panel") %>
 
     <% if (run.aiInsights) { %>
       <section class="panel">
@@ -132,6 +138,9 @@
                 <% Object.entries(run.diff.metrics || {}).forEach(function (entry) { %>
                   <li><strong><%= entry[0] %>:</strong> <%= entry[1] %></li>
                 <% }); %>
+                <% if (run.diff.cspCountDelta != null) { %>
+                  <li><strong>CSP violations:</strong> <%= run.diff.cspCountDelta > 0 ? "+" : "" %><%= run.diff.cspCountDelta %></li>
+                <% } %>
               </ul>
             <% } %>
           </div>
@@ -185,6 +194,9 @@
               <p><strong>Improved pages:</strong> <%= run.diff.improvedPages %></p>
               <p><strong>Regressed pages:</strong> <%= run.diff.regressedPages %></p>
               <p><strong>New pages:</strong> <%= run.diff.newPages %></p>
+              <% if (run.diff.cspCountDelta != null) { %>
+                <p><strong>CSP violations delta:</strong> <%= run.diff.cspCountDelta > 0 ? "+" : "" %><%= run.diff.cspCountDelta %></p>
+              <% } %>
             <% } %>
           </div>
           <div class="card">
@@ -255,6 +267,7 @@
                 <th class="num">BP</th>
                 <th class="num">SEO</th>
                 <th class="num">Overall</th>
+                <th class="num">CSP</th>
               </tr>
             </thead>
             <tbody>
@@ -267,6 +280,7 @@
                   <td class="num"><%= page.bestPractices ?? "—" %></td>
                   <td class="num"><%= page.seo ?? "—" %></td>
                   <td class="num"><%= page.overall ?? "—" %></td>
+                  <td class="num"><%= page.cspCount ?? 0 %></td>
                 </tr>
               <% }); %>
             </tbody>

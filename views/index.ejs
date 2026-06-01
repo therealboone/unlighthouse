@@ -5,19 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Queue Lighthouse scans, save monitored sites, review historical runs, and generate AI-backed audit summaries."
+      content="Lighthouse performance audits plus automated CSP console violation monitoring for agency site testing."
     />
-    <title>Lighthouse Scanner Automation</title>
+    <title>Lighthouse + CSP Scanner</title>
     <%- include("_styles") %>
   </head>
   <body>
     <header>
-      <h1>Lighthouse Scanner Automation</h1>
+      <h1>Lighthouse + CSP Scanner</h1>
       <p class="muted">
-        Queue manual scans, save recurring site monitors, review stored reports, and turn Lighthouse runs into agency-ready deliverables.
+        Queue Lighthouse scans, monitor Content-Security-Policy console violations, and deliver agency-ready audit reports.
       </p>
       <nav>
         <a href="/">Dashboard</a>
+        <a href="/?hasCsp=1">Runs with CSP issues</a>
         <a href="/api/runs">Runs API</a>
         <a href="/health">Health</a>
       </nav>
@@ -29,6 +30,32 @@
     <% if (notice) { %>
       <div class="flash-notice"><%= notice %></div>
     <% } %>
+
+    <% if (hasCspFilter) { %>
+      <div class="flash-notice">Showing recent runs with CSP console violations.</div>
+    <% } %>
+
+    <section class="panel csp-dashboard">
+      <h2>CSP Monitor Overview</h2>
+      <div class="score-grid">
+        <div class="score">
+          <div>Total violations (latest runs)</div>
+          <strong><%= cspDashboard?.totalViolations ?? 0 %></strong>
+        </div>
+        <div class="score">
+          <div>Sites with CSP issues</div>
+          <strong><%= cspDashboard?.sitesWithIssues ?? 0 %></strong>
+          <span class="muted small">of <%= cspDashboard?.monitoredSites ?? 0 %> monitored</span>
+        </div>
+        <div class="score">
+          <div>6-run CSP trend</div>
+          <strong>
+            <% if ((cspDashboard?.trendDelta ?? 0) > 0) { %>+<%= cspDashboard.trendDelta %><% } else { %><%= cspDashboard?.trendDelta ?? 0 %><% } %>
+          </strong>
+          <span class="muted small">vs prior 6 runs</span>
+        </div>
+      </div>
+    </section>
 
     <section class="panel">
       <div class="row" style="justify-content: space-between;">
@@ -118,6 +145,10 @@
             <label for="maxCls">Max CLS</label>
             <input id="maxCls" name="maxCls" type="number" min="0" step="0.01" value="<%= formDefaults.thresholds.maxCls %>" />
           </div>
+          <div class="field">
+            <label for="maxCspViolations">Max CSP console violations</label>
+            <input id="maxCspViolations" name="maxCspViolations" type="number" min="0" step="1" value="<%= formDefaults.thresholds.maxCspViolations %>" />
+          </div>
         </div>
 
         <div class="section-actions">
@@ -135,15 +166,25 @@
         <% } else { %>
           <ul class="list-clean">
             <% sites.forEach(function (site) { %>
+              <% const cspSite = cspDashboard?.statusBySiteId?.[site.id]; %>
               <li>
                 <div class="row" style="justify-content: space-between;">
                   <div>
                     <strong><a href="/sites/<%= site.id %>"><%= site.label %></a></strong><br />
                     <span class="muted small"><%= site.client?.name || "Unassigned" %> · <%= site.scanMode %> · <%= site.defaultFormFactor %></span>
                   </div>
-                  <span class="status-pill <%= site.schedule?.frequency === "off" ? "queued" : "completed" %>">
-                    <%= site.schedule?.frequency === "off" ? "manual" : site.schedule.frequency %>
-                  </span>
+                  <div class="row" style="gap: 0.35rem;">
+                    <% if (cspSite && cspSite.count != null) { %>
+                      <span class="status-pill <%= cspSite.hasIssue ? "failed" : "completed" %>">
+                        CSP <%= cspSite.count %>
+                      </span>
+                    <% } else { %>
+                      <span class="status-pill queued">CSP —</span>
+                    <% } %>
+                    <span class="status-pill <%= site.schedule?.frequency === "off" ? "queued" : "completed" %>">
+                      <%= site.schedule?.frequency === "off" ? "manual" : site.schedule.frequency %>
+                    </span>
+                  </div>
                 </div>
                 <p class="small url"><%= site.url %></p>
                 <div class="section-actions">
@@ -224,16 +265,25 @@
               <th>Run</th>
               <th>Site</th>
               <th>Overall</th>
+              <th class="num">CSP</th>
               <th>Completed</th>
             </tr>
           </thead>
           <tbody>
             <% recentRuns.forEach(function (run) { %>
               <% const overall = run.scanMode === "site" ? run.summary?.avgScores?.overall : run.summary?.overall; %>
+              <% const cspCount = run.summary?.csp?.count ?? 0; %>
               <tr>
                 <td><a href="/runs/<%= run.id %>"><%= run.scanMode %> / <%= run.formFactor %></a></td>
                 <td class="url"><%= run.site?.label || run.url %></td>
                 <td class="num"><%= overall != null ? overall : "—" %></td>
+                <td class="num">
+                  <% if (cspCount > 0) { %>
+                    <span class="status-pill failed"><%= cspCount %></span>
+                  <% } else { %>
+                    <span class="status-pill completed">0</span>
+                  <% } %>
+                </td>
                 <td><%= formatDate(run.completedAt || run.createdAt) %></td>
               </tr>
             <% }); %>

@@ -21,5 +21,11 @@ COPY lib ./lib
 COPY scripts ./scripts
 COPY views ./views
 
+# Railway sets PORT at runtime; default 4173 for local Docker.
+ENV PORT=4173
 EXPOSE 4173
+
+# Persistent JSON store + artifacts (mount a Railway volume here).
+VOLUME ["/app/data"]
+
 CMD ["node", "server.js"]

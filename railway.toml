@@ -1,0 +1,12 @@
+# Railway deployment config — https://railway.com/docs
+# Attach a volume at /app/data in the Railway dashboard for persistent scans.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+numReplicas = 1

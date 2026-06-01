@@ -220,6 +220,29 @@
   .status-pill.running { background: #d8edf9; color: #0d4c78; }
   .status-pill.completed { background: #dff3df; color: #175b1c; }
   .status-pill.failed { background: #f8dede; color: #7b1d1d; }
+  .csp-banner {
+    border-radius: 12px;
+    padding: 1rem 1.15rem;
+    margin: 1rem 0;
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(12px);
+  }
+  .csp-banner.csp-pass {
+    background: rgba(23, 91, 28, 0.12);
+    border-color: rgba(23, 91, 28, 0.35);
+  }
+  .csp-banner.csp-fail {
+    background: rgba(123, 29, 29, 0.14);
+    border-color: rgba(123, 29, 29, 0.4);
+    box-shadow: 0 8px 24px rgba(123, 29, 29, 0.12);
+  }
+  .csp-panel {
+    border: 1px solid rgba(13, 76, 120, 0.25);
+    box-shadow: 0 10px 28px rgba(13, 76, 120, 0.08);
+  }
+  .csp-dashboard .score strong {
+    color: #0c59a4;
+  }
   table {
     width: 100%;
     border-collapse: collapse;

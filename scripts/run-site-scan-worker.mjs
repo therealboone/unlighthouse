@@ -11,6 +11,7 @@ import { availableParallelism } from "node:os";
 import { createUnlighthouse } from "@unlighthouse/core";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import { extractCspFromLighthouseAudits, summarizeCspViolations } from "../lib/csp-console.js";
 
 const DEFAULT_MAX_SITE_ROUTES = 50;
 const SITE_SCAN_TIMEOUT_MS = Number(process.env.SITE_SCAN_TIMEOUT_MS) || 45 * 60 * 1000;
@@ -191,6 +192,7 @@ async function main() {
           };
         }
         const s = scoresFromUnlighthouseReport(r.report);
+        const csp = summarizeCspViolations(extractCspFromLighthouseAudits(r.report?.audits, url));
         return {
           url,
           status: "completed",
@@ -199,6 +201,8 @@ async function main() {
           bestPractices: s.bestPractices,
           seo: s.seo,
           overall: s.overall,
+          cspCount: csp.count,
+          cspViolations: csp.violations.slice(0, 15),
         };
       })
       .sort((a, b) => a.url.localeCompare(b.url));
@@ -213,6 +217,7 @@ async function main() {
           categories: r.report?.categories || null,
         },
         topOpportunities: extractTopOpportunities(r.report),
+        cspCount: summarizeCspViolations(extractCspFromLighthouseAudits(r.report?.audits, r.route.url)).count,
       }))
       .sort((a, b) => a.url.localeCompare(b.url));
 

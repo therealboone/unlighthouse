@@ -12,9 +12,14 @@
       <p class="muted"><%= client?.name || "Default Client" %> · <%= site.url %></p>
       <nav>
         <a href="/">Dashboard</a>
+        <% if (latestRun) { %><a href="/runs/<%= latestRun.id %>">Latest run</a><% } %>
         <a href="/api/sites/<%= site.id %>">Site JSON</a>
       </nav>
     </header>
+
+    <% if (latestRun) { %>
+      <%- include("_csp-banner", { run: latestRun, site: site }) %>
+    <% } %>
 
     <% if (error) { %>
       <div class="flash-error"><%= error %></div>
@@ -91,6 +96,10 @@
             <div class="field">
               <label for="maxCls">Max CLS</label>
               <input id="maxCls" name="maxCls" type="number" min="0" step="0.01" value="<%= site.thresholds.maxCls %>" />
+            </div>
+            <div class="field">
+              <label for="maxCspViolations">Max CSP console violations</label>
+              <input id="maxCspViolations" name="maxCspViolations" type="number" min="0" step="1" value="<%= site.thresholds.maxCspViolations ?? 0 %>" />
             </div>
           </div>
 

@@ -1,0 +1,22 @@
+<% const csp = run.summary?.csp || {}; %>
+<% const cspCount = csp.count ?? 0; %>
+<% const cspMax = csp.maxAllowed ?? site?.thresholds?.maxCspViolations ?? 0; %>
+<% const cspPass = csp.status === "pass" || cspCount <= cspMax; %>
+<div class="csp-banner <%= cspPass ? "csp-pass" : "csp-fail" %>">
+  <div class="row" style="justify-content: space-between; align-items: center;">
+    <div>
+      <strong>CSP Console Check</strong>
+      <p class="small" style="margin: 0.35rem 0 0;">
+        <%= cspPass ? "No CSP violations above your threshold." : "CSP violations detected in the browser console." %>
+      </p>
+    </div>
+    <span class="status-pill <%= cspPass ? "completed" : "failed" %>">
+      <%= cspPass ? "PASS" : "FAIL" %> · <%= cspCount %> / <%= cspMax %> allowed
+    </span>
+  </div>
+  <% if ((run.diff?.newCount || 0) > 0) { %>
+    <p class="small" style="margin-top: 0.65rem;">
+      <strong><%= run.diff.newCount %></strong> new violation(s) since the previous run.
+    </p>
+  <% } %>
+</div>

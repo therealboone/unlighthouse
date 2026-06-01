@@ -1,0 +1,138 @@
+<% const cspSummary = run.summary?.csp || {}; %>
+<% const cspViolations = cspSummary.violations || artifact?.cspViolations || []; %>
+<section class="panel csp-panel">
+  <div class="row" style="justify-content: space-between; align-items: flex-start;">
+    <div>
+      <h2>CSP Console Violations</h2>
+      <p class="muted small">
+        Runtime Content-Security-Policy messages from Lighthouse and a live browser pass.
+      </p>
+    </div>
+    <% if (!reportMode) { %>
+      <a class="button-link secondary" href="/exports/<%= run.id %>/csp">Download CSP CSV</a>
+    <% } %>
+  </div>
+
+  <div class="inline-meta">
+    <div><strong>Total</strong><br /><%= cspSummary.count ?? cspViolations.length ?? 0 %></div>
+    <div><strong>Pages affected</strong><br /><%= cspSummary.pageCount ?? (cspViolations.length ? 1 : 0) %></div>
+    <% if (run.diff?.cspCountDelta != null) { %>
+      <div><strong>Count delta</strong><br /><%= run.diff.cspCountDelta > 0 ? "+" : "" %><%= run.diff.cspCountDelta %></div>
+    <% } %>
+    <% if ((run.diff?.newCount || 0) > 0) { %>
+      <div><strong>New messages</strong><br /><%= run.diff.newCount %></div>
+    <% } %>
+    <% if ((run.diff?.resolvedCount || 0) > 0) { %>
+      <div><strong>Resolved</strong><br /><%= run.diff.resolvedCount %></div>
+    <% } %>
+  </div>
+
+  <% if (cspSummary.groups?.byBlockedHost?.length || cspSummary.groups?.byDirective?.length) { %>
+    <div class="grid" style="margin-top: 1rem;">
+      <div class="card">
+        <h3>By Blocked Host</h3>
+        <% if (!cspSummary.groups.byBlockedHost.length) { %>
+          <p class="muted small">—</p>
+        <% } else { %>
+          <ul class="list-clean">
+            <% cspSummary.groups.byBlockedHost.slice(0, 8).forEach(function (row) { %>
+              <li><strong><%= row.host %></strong> · <%= row.count %> violation(s)</li>
+            <% }); %>
+          </ul>
+        <% } %>
+      </div>
+      <div class="card">
+        <h3>By Directive</h3>
+        <% if (!cspSummary.groups.byDirective.length) { %>
+          <p class="muted small">—</p>
+        <% } else { %>
+          <ul class="list-clean">
+            <% cspSummary.groups.byDirective.slice(0, 8).forEach(function (row) { %>
+              <li><strong><%= row.directive %></strong> · <%= row.count %> violation(s)</li>
+            <% }); %>
+          </ul>
+        <% } %>
+      </div>
+    </div>
+  <% } %>
+
+  <% if ((run.diff?.newViolations || []).length) { %>
+    <div class="card" style="margin-top: 1rem;">
+      <h3>New Since Last Run</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>URL</th>
+            <th>Directive</th>
+            <th>Host</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% run.diff.newViolations.forEach(function (item) { %>
+            <tr>
+              <td class="url small"><%= item.url || "—" %></td>
+              <td><%= item.directive || "—" %></td>
+              <td><%= item.blockedHost || "—" %></td>
+              <td class="small"><%= item.message %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+
+  <% if (run.scanMode === "site" && cspSummary.topPages?.length) { %>
+    <div class="card" style="margin-top: 1rem;">
+      <h3>Pages With CSP Errors</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>URL</th>
+            <th class="num">Violations</th>
+            <th>Sample message</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% cspSummary.topPages.forEach(function (page) { %>
+            <tr>
+              <td class="url"><%= page.url %></td>
+              <td class="num"><%= page.count %></td>
+              <td class="small"><%= page.sample || "—" %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+
+  <% if (!cspViolations.length && !(cspSummary.topPages?.length)) { %>
+    <p class="muted" style="margin-top: 1rem;">No CSP-related console violations were recorded for this run.</p>
+  <% } else if (cspViolations.length) { %>
+    <div class="card" style="margin-top: 1rem;">
+      <h3><%= run.scanMode === "site" ? "All Captured Violations" : "Violations" %></h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Directive</th>
+            <th>Blocked host</th>
+            <th>URL</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% cspViolations.slice(0, 50).forEach(function (item) { %>
+            <tr>
+              <td><%= item.source || "—" %></td>
+              <td><%= item.directive || "—" %></td>
+              <td><%= item.blockedHost || "—" %></td>
+              <td class="url small"><%= item.url || "—" %></td>
+              <td class="small"><%= item.message %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</section>

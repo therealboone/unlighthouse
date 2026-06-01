@@ -9,7 +9,8 @@ import {
   isQueueBusy,
   submitScanJob,
 } from "./lib/automation.js";
-import { runToCsv } from "./lib/reporting.js";
+import { buildCspDashboardStats } from "./lib/csp-dashboard.js";
+import { runToCsv, runToCspCsv } from "./lib/reporting.js";
 import { normalizeFormFactor, normalizeScanMode, normalizeTarget, scanErrorMessage } from "./lib/scanner.js";
 import {
   deleteSite,
@@ -80,6 +81,7 @@ function parseThresholds(body) {
     minOverall: n(body.minOverall, 80),
     maxLcpMs: n(body.maxLcpMs, 2500),
     maxCls: n(body.maxCls, 0.1),
+    maxCspViolations: n(body.maxCspViolations, 0),
   };
 }
 
@@ -121,6 +123,8 @@ async function renderIndex(res, overrides = {}) {
     recentJobs: listJobs(12),
     recentRuns: listRuns(12),
     recentAlerts: listAlerts(12),
+    cspDashboard: buildCspDashboardStats(listSites(), listRuns(100)),
+    hasCspFilter: false,
     error: null,
     notice: null,
     formDefaults: {
@@ -193,7 +197,15 @@ app.get("/health", (req, res) => {
 app.get("/", async (req, res) => {
   const notice = String(req.query.notice || "").trim() || null;
   const error = String(req.query.error || "").trim() || null;
-  await renderIndex(res, { notice, error });
+  const hasCspFilter = String(req.query.hasCsp || "") === "1";
+  const sites = listSites();
+  const allRuns = listRuns(100);
+  let recentRuns = allRuns.slice(0, 12);
+  if (hasCspFilter) {
+    recentRuns = allRuns.filter((run) => (run.summary?.csp?.count || 0) > 0).slice(0, 12);
+  }
+  const cspDashboard = buildCspDashboardStats(sites, allRuns);
+  await renderIndex(res, { notice, error, sites, recentRuns, cspDashboard, hasCspFilter });
 });
 
 app.post("/scan", scanLimiter, async (req, res) => {
@@ -333,11 +345,14 @@ app.get("/sites/:id", async (req, res) => {
     return res.status(404).send("Site not found.");
   }
   const error = String(req.query.error || "").trim() || null;
+  const runs = listRunsForSite(site.id, 25);
+  const latestRun = runs.find((run) => run.status === "completed") || null;
   res.render("site", {
     isProd,
     site,
     client: getClient(site.clientId),
-    runs: listRunsForSite(site.id, 25),
+    runs,
+    latestRun,
     alerts: listAlerts(100).filter((alert) => alert.siteId === site.id).slice(0, 20),
     error,
     formatDate,
@@ -373,10 +388,25 @@ app.get("/runs/:id", async (req, res) => {
   });
 });
 
+app.get("/exports/:id/csp", async (req, res) => {
+  const view = await buildRunView(req.params.id);
+  if (!view) {
+    return res.status(404).send("Run not found.");
+  }
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${view.run.id}-csp.csv"`);
+  return res.send(runToCspCsv(view.run, view.pages, view.artifact));
+});
+
 app.get("/exports/:id", async (req, res) => {
   const view = await buildRunView(req.params.id);
   if (!view) {
     return res.status(404).send("Run not found.");
+  }
+  if (String(req.query?.format || "").toLowerCase() === "csp") {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${view.run.id}-csp.csv"`);
+    return res.send(runToCspCsv(view.run, view.pages, view.artifact));
   }
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${view.run.id}.csv"`);

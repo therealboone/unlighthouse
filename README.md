@@ -171,7 +171,7 @@ GET /health
 
 Example response:
 ```json
-{"ok":true,"scanBusy":false,"uptime":123.45}
+{"ok":true,"queueBusy":false,"jobsTracked":0,"uptime":123.45}
 ```
 
 ---
@@ -244,6 +244,43 @@ docker run --rm -p 4173:4173 -e NODE_ENV=production lighthousescanner
 ```
 
 Then open `http://localhost:4173`.
+
+---
+
+## Deploy on Railway
+
+[Railway](https://railway.com/) is a good fit for this app: long-running Node process, headless Chromium, and a Docker image already in the repo.
+
+### Prerequisites
+
+- GitHub repo connected to Railway
+- **One replica only** (the in-process job queue and file store are not multi-instance safe yet)
+- A **volume** mounted at `/app/data` so monitors, runs, and artifacts survive redeploys
+
+### Steps
+
+1. **New Project** → Deploy from GitHub → select this repository.
+2. Confirm the builder uses the **Dockerfile** (or `railway.toml` in the repo root).
+3. **Volumes** → Add volume → mount path: `/app/data`.
+4. **Variables** → Add settings from `env.railway.example` (at minimum `NODE_ENV=production`, `TRUST_PROXY=1`).
+5. **Settings** → Set memory to **2 GB+** (4 GB recommended for frequent full-site scans).
+6. **Networking** → Generate a public domain → open the URL and test `/health`.
+7. Queue a single-page scan on a public HTTPS URL to verify Lighthouse + CSP.
+
+### Railway checklist
+
+| Item | Value |
+|------|--------|
+| Builder | Dockerfile |
+| Volume mount | `/app/data` |
+| Replicas | `1` |
+| Health check | `GET /health` |
+| `ALLOW_INTERNAL_SCANS` | **unset** on public URLs |
+
+### Do not use on Railway (without changes)
+
+- Multiple replicas (split brain for jobs and `data/db.json`)
+- Serverless platforms without Chrome (Vercel functions, etc.)
 
 ---
 
