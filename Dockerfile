@@ -25,7 +25,4 @@ COPY views ./views
 ENV PORT=4173
 EXPOSE 4173
 
-# Persistent JSON store + artifacts (mount a Railway volume here).
-VOLUME ["/app/data"]
-
 CMD ["node", "server.js"]
