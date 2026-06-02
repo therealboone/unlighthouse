@@ -68,6 +68,55 @@ Notes:
 
 ---
 
+## CSP Monitoring (How It Works)
+
+This app includes automated **Content-Security-Policy (CSP) console monitoring** to catch runtime policy violations, not just static header quality.
+
+### What gets captured
+
+- **Single-page scans**
+  - CSP-related console findings from Lighthouse audit data
+  - A live browser console pass (Puppeteer) to capture runtime CSP violations
+- **Full-site scans**
+  - Per-page CSP console findings extracted during crawl-based Lighthouse runs
+
+### How violations are processed
+
+1. Capture console/audit messages from scan sources.
+2. Classify CSP messages (for example: "Refused to load ... violates Content Security Policy ...").
+3. Dedupe and normalize messages.
+4. Group by:
+   - blocked host
+   - directive (`script-src`, `connect-src`, etc.)
+5. Compare against prior run to surface:
+   - new violations
+   - resolved violations
+
+### Where it appears in the app
+
+- Dashboard CSP overview cards and site badges
+- Run-level CSP pass/fail banner
+- Detailed CSP panel in run/report views
+- CSP-specific CSV export (`/exports/:runId/csp`)
+- Threshold-based alerting and webhook payloads
+
+### Threshold behavior
+
+Each site has a **Max CSP console violations** threshold:
+
+- `0` (default): fail on any CSP console violation
+- `N > 0`: allow up to `N` before failing/alerting
+
+### Useful CSP environment flags
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `CSP_CONSOLE_AUDIT` | `true` | Run extra live console pass for single-page scans (`false` skips it) |
+| `CSP_CONSOLE_TIMEOUT_MS` | `60000` | Navigation timeout for CSP console pass |
+| `CSP_CONSOLE_SETTLE_MS` | `2000` | Post-load wait to capture delayed console messages |
+
+---
+
 ## Tech Stack
 
 - Node.js + Express + EJS
