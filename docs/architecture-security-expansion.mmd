@@ -1,0 +1,56 @@
+flowchart TB
+  subgraph ui ["Dashboard"]
+    A["Queue site scan"]
+    B["Queue repo security scan"]
+  end
+
+  subgraph queue ["Job queue - existing"]
+    J["Job worker"]
+  end
+
+  subgraph site ["Site pillar - today"]
+    LH["Lighthouse / Unlighthouse"]
+    CSP["CSP console pass"]
+  end
+
+  subgraph code ["Code pillar - new"]
+    GIT["Git clone shallow"]
+    SG["Semgrep OSS"]
+    DC["OWASP Dependency-Check"]
+  end
+
+  subgraph ai ["AI layer"]
+    H["Heuristic triage"]
+    OAI["OpenAI API"]
+    OLL["Ollama optional"]
+  end
+
+  subgraph out ["Reporting"]
+    MD["Markdown report"]
+    PDF["PDF export"]
+    GHI["GitHub Issues"]
+    JIRA["Jira optional"]
+  end
+
+  subgraph store ["Persistence"]
+    DB[("data/db.json + artifacts")]
+    VOL["Railway volume /app/data"]
+  end
+
+  A --> J
+  B --> J
+  J --> LH
+  J --> CSP
+  J --> GIT
+  GIT --> SG
+  GIT --> DC
+  SG --> H
+  DC --> H
+  H --> OAI
+  H --> OLL
+  OAI --> MD
+  MD --> PDF
+  MD --> GHI
+  MD --> JIRA
+  J --> store
+  store --> VOL

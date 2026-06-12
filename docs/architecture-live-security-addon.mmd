@@ -1,0 +1,69 @@
+flowchart TB
+  subgraph entry ["URL-only client - no repo required"]
+    URL["Production URL monitor"]
+    NOTE["No GitHub / GitLab access needed"]
+  end
+
+  subgraph queue ["Existing job queue"]
+    J["Job worker - one scan at a time"]
+  end
+
+  subgraph live_core ["Live site pillar - already built"]
+    LH["Lighthouse / Unlighthouse"]
+    CSP["CSP console pass"]
+  end
+
+  subgraph live_addon ["Live security add-on - minimal v1"]
+    HDR["Security headers check"]
+    HDRdetail["CSP header, HSTS, X-Frame-Options, etc."]
+    ZAP["OWASP ZAP baseline scan"]
+    ZAPdetail["Passive + light active probes on allowed URL"]
+  end
+
+  subgraph guardrails ["Scope and safety"]
+    SSRF["SSRF / host allowlist"]
+    RATE["Rate limits"]
+    CONSENT["Client authorization flag per monitor"]
+  end
+
+  subgraph ai ["AI layer - read-only triage"]
+    H["Heuristic grouping"]
+    OAI["OpenAI or Ollama optional"]
+    OUT_AI["Priorities + fix playbooks - no auto-patch"]
+  end
+
+  subgraph report ["Reporting"]
+    MD["Markdown report"]
+    PDF["PDF export"]
+    ALERT["Alerts + webhook"]
+    TICK["GitHub Issue / Jira optional - manual trigger"]
+  end
+
+  subgraph store ["Persistence"]
+    RUN["security_live run + artifacts"]
+    VOL["Volume /app/data"]
+  end
+
+  URL --> J
+  NOTE -.-> URL
+  J --> LH
+  J --> CSP
+  J --> HDR
+  J --> ZAP
+  SSRF --> J
+  RATE --> J
+  CONSENT --> J
+  HDR --> HDRdetail
+  ZAP --> ZAPdetail
+  LH --> H
+  CSP --> H
+  HDR --> H
+  ZAP --> H
+  H --> OAI
+  OAI --> OUT_AI
+  OUT_AI --> MD
+  MD --> PDF
+  MD --> ALERT
+  MD --> TICK
+  J --> RUN
+  RUN --> VOL
